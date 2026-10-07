@@ -1,9 +1,11 @@
+
 {
   "name": "campusbite-backend",
   "version": "1.0.0",
-  "description": "CampusBite Backend Migration and API utilities",
-  "main": "migrate.js",
+  "description": "CampusBite Backend",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "migrate": "node migrate.js",
     "seed-users": "node seed-users.js"
   },
