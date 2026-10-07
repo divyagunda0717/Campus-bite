@@ -14,6 +14,11 @@ const server = http.createServer((req, res) => {
     }));
     return;
   }
+  "scripts": {
+  "start": "node server.js",
+  "migrate": "node migrate.js",
+  "seed-users": "node seed-users.js"
+}
 
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Route not found' }));
