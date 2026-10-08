@@ -1,230 +1,286 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { getStalls } from '../lib/dataService';
+import { getProfileById, saveProfile, getStalls } from '../lib/dataService';
 
 const AuthContext = createContext(null);
 
-export const DEMO_PRESETS = [
-  {
-    roleKey: 'super_admin',
-    label: 'Super Admin',
-    email: 'admin@campusbite.demo',
-    password: 'CampusBite@123',
-    name: 'Dr. R. K. Sharma (Campus Director)',
-    role: 'super_admin',
-    assignedStallId: null,
-    avatar: '👨‍💼',
-    badgeColor: 'bg-red-100 text-red-800 border-red-200'
-  },
-  {
-    roleKey: 'tiffin',
-    label: 'Tiffin Stall Admin',
-    email: 'tiffin@campusbite.demo',
-    password: 'CampusBite@123',
-    name: 'Ramesh Kumar',
-    role: 'stall_admin',
-    stallName: 'Tiffin Stall',
-    assignedStallId: '22222222-2222-2222-2222-222222222222',
-    avatar: '👨‍🍳',
-    badgeColor: 'bg-amber-100 text-amber-800 border-amber-200'
-  },
-  {
-    roleKey: 'fastfood',
-    label: 'Fast Food Admin',
-    email: 'fastfood@campusbite.demo',
-    password: 'CampusBite@123',
-    name: 'Suresh Patel',
-    role: 'stall_admin',
-    stallName: 'Fast Food Stall',
-    assignedStallId: '33333333-3333-3333-3333-333333333333',
-    avatar: '🍔',
-    badgeColor: 'bg-orange-100 text-orange-800 border-orange-200'
-  },
-  {
-    roleKey: 'student',
-    label: 'Student',
-    email: 'student@campusbite.demo',
-    password: 'CampusBite@123',
-    name: 'Aditya Sharma',
-    role: 'student',
-    assignedStallId: null,
-    avatar: '🎓',
-    badgeColor: 'bg-blue-100 text-blue-800 border-blue-200'
-  },
-  {
-    roleKey: 'faculty',
-    label: 'Faculty',
-    email: 'faculty@campusbite.demo',
-    password: 'CampusBite@123',
-    name: 'Dr. Meenakshi Sundaram',
-    role: 'faculty',
-    assignedStallId: null,
-    avatar: '👩‍🏫',
-    badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200'
-  }
-];
-
 export function AuthProvider({ children }) {
-  // Default to student demo user for immediate browsing
   const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('campusbite_active_user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
-    }
-    return {
-      id: 'demo-student-id',
-      email: 'student@campusbite.demo',
-      name: 'Aditya Sharma',
-      role: 'student',
-      phone: '+91 98888 44444',
-      assignedStallId: null
-    };
+    try {
+      const saved = localStorage.getItem('campusbite_active_user');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return null;
   });
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('campusbite_active_user', JSON.stringify(user));
-    } else {
+  // Sync session with Supabase Auth
+  const syncSessionUser = async (sessionUser) => {
+    if (!sessionUser) {
+      setUser(null);
       localStorage.removeItem('campusbite_active_user');
+      setLoading(false);
+      return;
     }
-  }, [user]);
 
-  // Listen to Supabase Auth state changes if active
+    const meta = sessionUser.user_metadata || {};
+    let profile = await getProfileById(sessionUser.id);
+
+    // Bootstrap Super Admin for project owner divyagunda0717@gmail.com if needed
+    const isSuperAdminEmail = sessionUser.email === 'divyagunda0717@gmail.com';
+    let role = (profile?.role || meta.role || (isSuperAdminEmail ? 'SUPER_ADMIN' : 'STUDENT')).toUpperCase();
+    let accountStatus = (profile?.account_status || meta.account_status || (role === 'STAFF_MEMBER' || role === 'STALL_ADMIN' ? 'PENDING' : 'ACTIVE')).toUpperCase();
+
+    if (isSuperAdminEmail) {
+      role = 'SUPER_ADMIN';
+      accountStatus = 'ACTIVE';
+    }
+
+    let stallId = profile?.stall_id || meta.stall_id || null;
+
+    const userData = {
+      id: sessionUser.id,
+      email: sessionUser.email,
+      name: profile?.full_name || meta.name || meta.full_name || sessionUser.email.split('@')[0],
+      role,
+      account_status: accountStatus,
+      phone: profile?.phone || meta.phone || '',
+      assignedStallId: stallId
+    };
+
+    // If account is not active, don't store in active session
+    if (accountStatus !== 'ACTIVE') {
+      setUser({ ...userData, isRestricted: true });
+    } else {
+      setUser(userData);
+      localStorage.setItem('campusbite_active_user', JSON.stringify(userData));
+    }
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        const metadata = session.user.user_metadata || {};
-        const role = metadata.role || 'student';
-        const name = metadata.name || session.user.email?.split('@')[0] || 'User';
+    let mounted = true;
 
-        let assignedStallId = metadata.stall_id || null;
-        if (role === 'stall_admin' && !assignedStallId) {
-          // Find stall by email
-          const stalls = await getStalls({ includeInactive: true });
-          const matched = stalls.find(s => s.assigned_admin_email === session.user.email);
-          if (matched) assignedStallId = matched.id;
+    async function initAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (mounted) {
+          if (session?.user) {
+            await syncSessionUser(session.user);
+          } else {
+            setLoading(false);
+          }
         }
+      } catch (err) {
+        if (mounted) setLoading(false);
+      }
+    }
 
-        setUser({
-          id: session.user.id,
-          email: session.user.email,
-          name,
-          role,
-          phone: metadata.phone || '',
-          assignedStallId
-        });
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (mounted) {
+        if (session?.user) {
+          await syncSessionUser(session.user);
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          localStorage.removeItem('campusbite_active_user');
+        }
       }
     });
 
     return () => {
+      mounted = false;
       subscription?.unsubscribe();
     };
   }, []);
 
-  // Quick 1-click role switcher for hackathon judges & testers
-  const switchDemoRole = async (roleKey) => {
-    setLoading(true);
-    const preset = DEMO_PRESETS.find(p => p.roleKey === roleKey);
-    if (!preset) return;
-
-    // Check if we can sign in via Supabase Auth
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: preset.email,
-        password: preset.password
-      });
-
-      if (!error && data?.user) {
-        setUser({
-          id: data.user.id,
-          email: preset.email,
-          name: preset.name,
-          role: preset.role,
-          assignedStallId: preset.assignedStallId
-        });
-        setLoading(false);
-        return;
-      }
-    } catch (e) {
-      // fallback
-    }
-
-    // Direct active user set
-    setUser({
-      id: `demo-${preset.roleKey}-id`,
-      email: preset.email,
-      name: preset.name,
-      role: preset.role,
-      assignedStallId: preset.assignedStallId
-    });
-    setLoading(false);
-  };
-
   const login = async (email, password) => {
     setLoading(true);
     try {
-      // Check preset match first
-      const preset = DEMO_PRESETS.find(p => p.email.toLowerCase() === email.toLowerCase());
-      if (preset && password === preset.password) {
-        setUser({
-          id: `demo-${preset.roleKey}-id`,
-          email: preset.email,
-          name: preset.name,
-          role: preset.role,
-          assignedStallId: preset.assignedStallId
-        });
+      const cleanEmail = email.trim().toLowerCase();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password
+      });
+
+      if (error) {
         setLoading(false);
-        return { success: true };
+        return { success: false, error: error.message };
       }
 
-      // Try Supabase Auth
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      const authUser = data.user;
+      const meta = authUser.user_metadata || {};
+      let profile = await getProfileById(authUser.id);
 
-      const meta = data.user.user_metadata || {};
-      const role = meta.role || 'student';
-      setUser({
-        id: data.user.id,
-        email: data.user.email,
-        name: meta.name || email.split('@')[0],
+      const isSuperAdminEmail = cleanEmail === 'divyagunda0717@gmail.com';
+      let role = (profile?.role || meta.role || (isSuperAdminEmail ? 'SUPER_ADMIN' : 'STUDENT')).toUpperCase();
+      let accountStatus = (profile?.account_status || meta.account_status || (role === 'STAFF_MEMBER' || role === 'STALL_ADMIN' ? 'PENDING' : 'ACTIVE')).toUpperCase();
+
+      if (isSuperAdminEmail) {
+        role = 'SUPER_ADMIN';
+        accountStatus = 'ACTIVE';
+      }
+
+      // Check account status strictly (Requirement 8)
+      if (accountStatus === 'PENDING') {
+        setLoading(false);
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          status: 'PENDING',
+          error: 'Your account is awaiting Super Admin approval.'
+        };
+      }
+
+      if (accountStatus === 'REJECTED') {
+        setLoading(false);
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          status: 'REJECTED',
+          error: 'Your registration request was not approved.'
+        };
+      }
+
+      if (accountStatus === 'DEACTIVATED') {
+        setLoading(false);
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          status: 'DEACTIVATED',
+          error: 'Your account has been deactivated. Please contact the administrator.'
+        };
+      }
+
+      const stallId = profile?.stall_id || meta.stall_id || null;
+
+      const userData = {
+        id: authUser.id,
+        email: authUser.email,
+        name: profile?.full_name || meta.name || meta.full_name || authUser.email.split('@')[0],
         role,
-        assignedStallId: meta.stall_id || null
-      });
+        account_status: 'ACTIVE',
+        phone: profile?.phone || meta.phone || '',
+        assignedStallId: stallId
+      };
+
+      setUser(userData);
+      localStorage.setItem('campusbite_active_user', JSON.stringify(userData));
       setLoading(false);
-      return { success: true };
+
+      return {
+        success: true,
+        role,
+        stallId,
+        status: 'ACTIVE'
+      };
     } catch (err) {
       setLoading(false);
-      return { success: false, error: err.message };
+      return { success: false, error: err.message || 'Login failed.' };
     }
   };
 
-  const register = async ({ email, password, name, role = 'student', phone = '' }) => {
+  const register = async ({ email, password, name, role = 'STUDENT', phone = '' }) => {
     setLoading(true);
     try {
+      const normalizedRole = role.toUpperCase();
+      const cleanEmail = email.trim().toLowerCase();
+
+      // Super Admin CANNOT be registered publicly (Requirement 1 & 6)
+      if (normalizedRole === 'SUPER_ADMIN') {
+        setLoading(false);
+        return {
+          success: false,
+          error: 'Super Admin accounts cannot be created via public registration.'
+        };
+      }
+
+      if (!['STUDENT', 'FACULTY', 'STAFF_MEMBER', 'STALL_ADMIN'].includes(normalizedRole)) {
+        setLoading(false);
+        return {
+          success: false,
+          error: 'Please select a valid role.'
+        };
+      }
+
+      // Student and Faculty: ACTIVE immediately (Requirement 2 & 3)
+      // Staff Member and Stall Admin: PENDING (Requirement 4 & 5)
+      const initialStatus = (normalizedRole === 'STAFF_MEMBER' || normalizedRole === 'STALL_ADMIN')
+        ? 'PENDING'
+        : 'ACTIVE';
+
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: cleanEmail,
         password,
         options: {
-          data: { name, role, phone }
+          data: {
+            name,
+            full_name: name,
+            role: normalizedRole,
+            account_status: initialStatus,
+            phone,
+            stall_id: null
+          }
         }
       });
-      if (error) throw error;
 
-      setUser({
-        id: data.user?.id || `user-${Date.now()}`,
-        email,
+      if (error) {
+        setLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      const userId = data.user?.id || crypto.randomUUID();
+
+      // Persist profile
+      await saveProfile({
+        id: userId,
+        full_name: name,
+        email: cleanEmail,
+        role: normalizedRole,
+        account_status: initialStatus,
+        phone,
+        stall_id: null
+      });
+
+      setLoading(false);
+
+      if (initialStatus === 'PENDING') {
+        // Sign out right away so pending user is not considered logged in
+        await supabase.auth.signOut();
+        setUser(null);
+        return {
+          success: true,
+          status: 'PENDING',
+          role: normalizedRole,
+          message: 'Your registration has been submitted and is awaiting Super Admin approval.'
+        };
+      }
+
+      // For Student and Faculty: Log them in
+      const userData = {
+        id: userId,
+        email: cleanEmail,
         name,
-        role,
+        role: normalizedRole,
+        account_status: 'ACTIVE',
         phone,
         assignedStallId: null
-      });
-      setLoading(false);
-      return { success: true };
+      };
+
+      setUser(userData);
+      localStorage.setItem('campusbite_active_user', JSON.stringify(userData));
+
+      return {
+        success: true,
+        status: 'ACTIVE',
+        role: normalizedRole
+      };
     } catch (err) {
       setLoading(false);
-      return { success: false, error: err.message };
+      return { success: false, error: err.message || 'Registration failed.' };
     }
   };
 
@@ -232,20 +288,37 @@ export function AuthProvider({ children }) {
     try {
       await supabase.auth.signOut();
     } catch (e) {}
+    localStorage.removeItem('campusbite_active_user');
     setUser(null);
+  };
+
+  const refreshUser = async () => {
+    if (!user?.id) return;
+    const profile = await getProfileById(user.id);
+    if (profile) {
+      const updated = {
+        ...user,
+        role: profile.role,
+        account_status: profile.account_status,
+        assignedStallId: profile.stall_id
+      };
+      setUser(updated);
+      localStorage.setItem('campusbite_active_user', JSON.stringify(updated));
+    }
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        role: user?.role || 'student',
-        isAuthenticated: !!user,
+        role: user?.role || 'GUEST',
+        accountStatus: user?.account_status || 'GUEST',
+        isAuthenticated: !!user && user.account_status === 'ACTIVE',
         loading,
         login,
         register,
         logout,
-        switchDemoRole,
+        refreshUser,
         assignedStallId: user?.assignedStallId || null
       }}
     >

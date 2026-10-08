@@ -3,14 +3,15 @@ import { SEED_STALLS, SEED_FOOD_ITEMS, SEED_STALL_QRS, generateDefaultSlots } fr
 
 // Local storage keys for persistent client storage & offline fallback
 const STORAGE_KEYS = {
-  STALLS: 'campusbite_stalls_v1',
-  FOOD_ITEMS: 'campusbite_food_items_v1',
-  ORDERS: 'campusbite_orders_v1',
-  SLOTS: 'campusbite_slots_v1',
-  QRS: 'campusbite_qrs_v1'
+  STALLS: 'campusbite_stalls_v2',
+  FOOD_ITEMS: 'campusbite_food_items_v2',
+  ORDERS: 'campusbite_orders_v2',
+  SLOTS: 'campusbite_slots_v2',
+  QRS: 'campusbite_qrs_v2',
+  PROFILES: 'campusbite_profiles_v2',
+  STALL_MEMBERS: 'campusbite_members_v2'
 };
 
-// Initialize local cache if empty
 function getLocal(key, defaultVal) {
   try {
     const raw = localStorage.getItem(key);
@@ -27,29 +28,254 @@ function getLocal(key, defaultVal) {
 function setLocal(key, val) {
   try {
     localStorage.setItem(key, JSON.stringify(val));
-    // Dispatch event to notify other components/tabs
     window.dispatchEvent(new CustomEvent('campusbite_data_updated', { detail: { key } }));
   } catch (e) {
     console.error('Storage write error', e);
   }
 }
 
-// Ensure seed data is initialized in local state
+// Clean initialization: ZERO fake demo accounts
 export function initLocalData() {
   getLocal(STORAGE_KEYS.STALLS, SEED_STALLS);
   getLocal(STORAGE_KEYS.FOOD_ITEMS, SEED_FOOD_ITEMS);
   getLocal(STORAGE_KEYS.ORDERS, []);
   getLocal(STORAGE_KEYS.QRS, SEED_STALL_QRS);
+  getLocal(STORAGE_KEYS.PROFILES, []);
+  getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
 }
 
 initLocalData();
+
+// ============================================================================
+// USER PROFILES & ACCOUNTS SERVICE
+// ============================================================================
+
+export async function getProfiles() {
+  try {
+    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    if (!error && data && data.length > 0) {
+      setLocal(STORAGE_KEYS.PROFILES, data);
+      return data;
+    }
+  } catch (err) {}
+
+  return getLocal(STORAGE_KEYS.PROFILES, []);
+}
+
+export async function getProfileById(userId) {
+  if (!userId) return null;
+  try {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (!error && data) return data;
+  } catch (err) {}
+
+  const profiles = getLocal(STORAGE_KEYS.PROFILES, []);
+  return profiles.find(p => p.id === userId) || null;
+}
+
+export async function saveProfile(profileData) {
+  const normalized = {
+    id: profileData.id,
+    full_name: profileData.full_name || profileData.name || 'User',
+    email: profileData.email,
+    phone: profileData.phone || '',
+    role: (profileData.role || 'STUDENT').toUpperCase(),
+    account_status: (profileData.account_status || 'ACTIVE').toUpperCase(),
+    stall_id: profileData.stall_id || null,
+    created_at: profileData.created_at || new Date().toISOString()
+  };
+
+  try {
+    await supabase.from('profiles').upsert(normalized);
+  } catch (err) {}
+
+  const profiles = getLocal(STORAGE_KEYS.PROFILES, []);
+  const idx = profiles.findIndex(p => p.id === normalized.id || p.email === normalized.email);
+  if (idx !== -1) {
+    profiles[idx] = { ...profiles[idx], ...normalized };
+  } else {
+    profiles.push(normalized);
+  }
+  setLocal(STORAGE_KEYS.PROFILES, profiles);
+  return normalized;
+}
+
+export async function updateProfile(userId, updateData) {
+  try {
+    await supabase.from('profiles').update(updateData).eq('id', userId);
+  } catch (err) {}
+
+  const profiles = getLocal(STORAGE_KEYS.PROFILES, []);
+  const idx = profiles.findIndex(p => p.id === userId);
+  if (idx !== -1) {
+    profiles[idx] = { ...profiles[idx], ...updateData };
+    setLocal(STORAGE_KEYS.PROFILES, profiles);
+    return profiles[idx];
+  }
+  return null;
+}
+
+// ============================================================================
+// STALL MEMBERS & APPROVAL MANAGEMENT (REQUIREMENT 4, 5, 6)
+// ============================================================================
+
+export async function getStallMembers() {
+  try {
+    const { data, error } = await supabase.from('stall_members').select('*');
+    if (!error && data && data.length > 0) {
+      setLocal(STORAGE_KEYS.STALL_MEMBERS, data);
+      return data;
+    }
+  } catch (err) {}
+
+  return getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
+}
+
+export async function getPendingStaffRequests() {
+  const profiles = await getProfiles();
+  return profiles.filter(p =>
+    (p.role === 'STAFF_MEMBER' || p.role === 'STALL_ADMIN') &&
+    (p.account_status === 'PENDING' || !p.account_status)
+  );
+}
+
+export async function approveStaffRequest(userId, stallId) {
+  if (!stallId) throw new Error('Stall ID must be provided for approval');
+
+  const stall = await getStallById(stallId);
+  const stallName = stall ? stall.name : 'Assigned Stall';
+
+  // 1. Update Profile: status ACTIVE, stall_id assigned
+  const updatedProfile = await updateProfile(userId, {
+    account_status: 'ACTIVE',
+    stall_id: stallId
+  });
+
+  // 2. Update / Upsert stall_members record
+  try {
+    await supabase.from('stall_members').upsert({
+      user_id: userId,
+      stall_id: stallId,
+      approval_status: 'ACTIVE',
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+  } catch (err) {}
+
+  const members = getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
+  const mIdx = members.findIndex(m => m.user_id === userId);
+  if (mIdx !== -1) {
+    members[mIdx] = { ...members[mIdx], stall_id: stallId, approval_status: 'ACTIVE' };
+  } else {
+    members.push({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      stall_id: stallId,
+      approval_status: 'ACTIVE',
+      created_at: new Date().toISOString()
+    });
+  }
+  setLocal(STORAGE_KEYS.STALL_MEMBERS, members);
+
+  // 3. Update stall admin info
+  if (updatedProfile) {
+    await updateStall(stallId, {
+      assigned_admin_name: updatedProfile.full_name,
+      assigned_admin_email: updatedProfile.email
+    });
+  }
+
+  return updatedProfile;
+}
+
+export async function rejectStaffRequest(userId, reason = 'Request not approved by administrator') {
+  const updatedProfile = await updateProfile(userId, {
+    account_status: 'REJECTED',
+    stall_id: null,
+    rejection_reason: reason
+  });
+
+  try {
+    await supabase.from('stall_members').update({
+      approval_status: 'REJECTED',
+      stall_id: null
+    }).eq('user_id', userId);
+  } catch (err) {}
+
+  const members = getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
+  const mIdx = members.findIndex(m => m.user_id === userId);
+  if (mIdx !== -1) {
+    members[mIdx] = { ...members[mIdx], approval_status: 'REJECTED', stall_id: null };
+    setLocal(STORAGE_KEYS.STALL_MEMBERS, members);
+  }
+
+  return updatedProfile;
+}
+
+export async function reassignStaff(userId, newStallId) {
+  const oldProfile = await getProfileById(userId);
+  if (oldProfile && oldProfile.stall_id) {
+    // Clear old stall assigned admin
+    await updateStall(oldProfile.stall_id, {
+      assigned_admin_name: '',
+      assigned_admin_email: ''
+    });
+  }
+
+  return await approveStaffRequest(userId, newStallId);
+}
+
+export async function toggleStaffActive(userId, isActive) {
+  const status = isActive ? 'ACTIVE' : 'DEACTIVATED';
+  const updatedProfile = await updateProfile(userId, {
+    account_status: status
+  });
+
+  try {
+    await supabase.from('stall_members').update({
+      approval_status: status
+    }).eq('user_id', userId);
+  } catch (err) {}
+
+  const members = getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
+  const mIdx = members.findIndex(m => m.user_id === userId);
+  if (mIdx !== -1) {
+    members[mIdx] = { ...members[mIdx], approval_status: status };
+    setLocal(STORAGE_KEYS.STALL_MEMBERS, members);
+  }
+
+  return updatedProfile;
+}
+
+export async function removeStaffAccess(userId) {
+  const profile = await getProfileById(userId);
+  if (profile && profile.stall_id) {
+    await updateStall(profile.stall_id, {
+      assigned_admin_name: '',
+      assigned_admin_email: ''
+    });
+  }
+
+  const updatedProfile = await updateProfile(userId, {
+    account_status: 'DEACTIVATED',
+    stall_id: null
+  });
+
+  try {
+    await supabase.from('stall_members').delete().eq('user_id', userId);
+  } catch (err) {}
+
+  const members = getLocal(STORAGE_KEYS.STALL_MEMBERS, []);
+  const filtered = members.filter(m => m.user_id !== userId);
+  setLocal(STORAGE_KEYS.STALL_MEMBERS, filtered);
+
+  return updatedProfile;
+}
 
 // ============================================================================
 // STALL SERVICES
 // ============================================================================
 
 export async function getStalls({ includeInactive = false } = {}) {
-  // Try Supabase first
   try {
     let query = supabase.from('stalls').select('*');
     if (!includeInactive) {
@@ -59,25 +285,20 @@ export async function getStalls({ includeInactive = false } = {}) {
     if (!error && data && data.length > 0) {
       return data;
     }
-  } catch (err) {
-    // fallback
-  }
+  } catch (err) {}
 
-  // Fallback to local storage
   const allStalls = getLocal(STORAGE_KEYS.STALLS, SEED_STALLS);
-  if (includeInactive) {
-    return allStalls;
-  }
+  if (includeInactive) return allStalls;
   return allStalls.filter(s => s.is_active === true);
 }
 
 export async function getStallById(stallId) {
+  if (!stallId) return null;
   try {
     const { data, error } = await supabase.from('stalls').select('*').eq('id', stallId).single();
     if (!error && data) return data;
-  } catch (err) {
-    // fallback
-  }
+  } catch (err) {}
+
   const allStalls = getLocal(STORAGE_KEYS.STALLS, SEED_STALLS);
   return allStalls.find(s => s.id === stallId) || null;
 }
@@ -122,26 +343,16 @@ export async function updateStall(stallId, updateData) {
   return null;
 }
 
-// Requirement 4: Soft-delete / Deactivate Stall
 export async function deactivateStall(stallId) {
   return await updateStall(stallId, { is_active: false, is_open: false });
 }
 
-// Requirement 4: Reactivate Stall
 export async function reactivateStall(stallId) {
   return await updateStall(stallId, { is_active: true, is_open: true });
 }
 
-// Requirement 24: Stall Open/Closed toggle by Canteen Member
 export async function toggleStallOpen(stallId, isOpen) {
   return await updateStall(stallId, { is_open: isOpen });
-}
-
-export async function assignStallAdmin(stallId, adminEmail, adminName) {
-  return await updateStall(stallId, {
-    assigned_admin_email: adminEmail,
-    assigned_admin_name: adminName
-  });
 }
 
 // ============================================================================
@@ -149,6 +360,7 @@ export async function assignStallAdmin(stallId, adminEmail, adminName) {
 // ============================================================================
 
 export async function getFoodItemsByStall(stallId, { includeUnavailable = true } = {}) {
+  if (!stallId) return [];
   try {
     let query = supabase.from('food_items').select('*').eq('stall_id', stallId);
     if (!includeUnavailable) {
@@ -226,6 +438,7 @@ export async function toggleFoodAvailability(foodId, isAvailable) {
 // ============================================================================
 
 export async function getPickupSlots(stallId) {
+  if (!stallId) return [];
   try {
     const { data, error } = await supabase.from('pickup_slots').select('*').eq('stall_id', stallId).order('start_time');
     if (!error && data && data.length > 0) {
@@ -259,6 +472,7 @@ export async function bookSlot(stallId, slotId) {
 // ============================================================================
 
 export async function getStallQR(stallId) {
+  if (!stallId) return null;
   try {
     const { data, error } = await supabase.from('stall_qr').select('*').eq('stall_id', stallId).single();
     if (!error && data) return data;
@@ -267,8 +481,8 @@ export async function getStallQR(stallId) {
   const qrs = getLocal(STORAGE_KEYS.QRS, SEED_STALL_QRS);
   return qrs[stallId] || {
     stall_id: stallId,
-    upi_id: 'campusbite@upi',
-    qr_image_url: 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=campusbite@upi'
+    upi_id: `stall-${stallId.slice(0, 4)}@campusbite`,
+    qr_image_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=stall-${stallId.slice(0, 4)}@campusbite`
   };
 }
 
@@ -280,7 +494,7 @@ export async function updateStallQR(stallId, qrData) {
   };
 
   try {
-    await supabase.from('stall_qr').upsert(updated);
+    await supabase.from('stall_qr').upsert(updated, { onConflict: 'stall_id' });
   } catch (err) {}
 
   const qrs = getLocal(STORAGE_KEYS.QRS, SEED_STALL_QRS);
@@ -289,13 +503,21 @@ export async function updateStallQR(stallId, qrData) {
   return updated;
 }
 
+export async function deleteStallQR(stallId) {
+  try {
+    await supabase.from('stall_qr').delete().eq('stall_id', stallId);
+  } catch (err) {}
+
+  const qrs = getLocal(STORAGE_KEYS.QRS, SEED_STALL_QRS);
+  delete qrs[stallId];
+  setLocal(STORAGE_KEYS.QRS, qrs);
+  return true;
+}
+
 // ============================================================================
-// ORDER MANAGEMENT & WORKFLOW SERVICES
+// ORDER SERVICES & STRICT STALL DATA ISOLATION (REQUIREMENT 1, 2, 3, 9)
 // ============================================================================
 
-// Status workflow valid transitions:
-// Order Placed -> Confirmed -> Preparing -> Ready for Pickup -> Collected
-// Order Placed -> Rejected/Cancelled
 const VALID_NEXT_STATUSES = {
   'Order Placed': ['Confirmed', 'Rejected/Cancelled'],
   'Confirmed': ['Preparing'],
@@ -306,25 +528,30 @@ const VALID_NEXT_STATUSES = {
 };
 
 export async function createOrder(orderPayload) {
+  if (!orderPayload.stallId) {
+    throw new Error('A valid stall must be selected for the order');
+  }
+
   const shortNum = Math.floor(1000 + Math.random() * 9000);
-  const orderId = `CB-${shortNum}`;
+  const orderNumber = `CB-${shortNum}`;
 
   const newOrder = {
     id: crypto.randomUUID(),
-    order_id: orderId,
+    order_number: orderNumber,
+    order_id: orderNumber, // compatible with UI
     user_id: orderPayload.userId,
     customer_name: orderPayload.customerName || 'Campus Student',
     customer_email: orderPayload.customerEmail || '',
-    stall_id: orderPayload.stallId,
-    stall_name: orderPayload.stallName,
-    pickup_slot_id: orderPayload.pickupSlotId,
-    pickup_time: orderPayload.pickupTime,
+    stall_id: orderPayload.stallId, // CRITICAL: ORDER.stall_id = SELECTED_STALL.id
+    stall_name: orderPayload.stallName || 'Food Stall',
+    pickup_slot_id: orderPayload.pickupSlotId || null,
+    pickup_time: orderPayload.pickupTime || 'Immediate',
     total_amount: Number(orderPayload.totalAmount.toFixed(2)),
     payment_method: orderPayload.paymentMethod, // 'cash' or 'online'
     payment_status: orderPayload.paymentMethod === 'cash' ? 'Cash on Pickup' : 'Completed (Simulated)',
-    order_status: 'Order Placed', // Initial status
+    order_status: 'Order Placed',
     rejection_reason: null,
-    items: orderPayload.items.map(item => ({
+    items: (orderPayload.items || []).map(item => ({
       id: item.food.id,
       food_name: item.food.name,
       quantity: item.quantity,
@@ -337,17 +564,26 @@ export async function createOrder(orderPayload) {
     created_at: new Date().toISOString()
   };
 
-  // Try Supabase insert
   try {
-    await supabase.from('orders').insert([newOrder]);
+    await supabase.from('orders').insert([{
+      id: newOrder.id,
+      order_number: newOrder.order_number,
+      user_id: newOrder.user_id,
+      stall_id: newOrder.stall_id,
+      pickup_slot_id: newOrder.pickup_slot_id,
+      pickup_time: newOrder.pickup_time,
+      total_amount: newOrder.total_amount,
+      payment_method: newOrder.payment_method,
+      payment_status: newOrder.payment_status,
+      order_status: newOrder.order_status,
+      created_at: newOrder.created_at
+    }]);
   } catch (err) {}
 
-  // Save to persistent orders store
   const orders = getLocal(STORAGE_KEYS.ORDERS, []);
-  orders.unshift(newOrder); // newest first
+  orders.unshift(newOrder);
   setLocal(STORAGE_KEYS.ORDERS, orders);
 
-  // Increment slot booking
   if (orderPayload.stallId && orderPayload.pickupSlotId) {
     await bookSlot(orderPayload.stallId, orderPayload.pickupSlotId);
   }
@@ -357,11 +593,12 @@ export async function createOrder(orderPayload) {
 
 export async function getOrderById(orderId) {
   const orders = getLocal(STORAGE_KEYS.ORDERS, []);
-  return orders.find(o => o.id === orderId || o.order_id === orderId) || null;
+  return orders.find(o => o.id === orderId || o.order_number === orderId || o.order_id === orderId) || null;
 }
 
-// Student / Faculty: View own orders
+// Student / Faculty: View ONLY their own orders
 export async function getUserOrders(userId) {
+  if (!userId) return [];
   try {
     const { data, error } = await supabase.from('orders').select('*').eq('user_id', userId).order('created_at', { ascending: false });
     if (!error && data && data.length > 0) return data;
@@ -371,8 +608,9 @@ export async function getUserOrders(userId) {
   return orders.filter(o => o.user_id === userId);
 }
 
-// Canteen Member: STRICT STALL DATA ISOLATION (Only assigned stall)
+// Staff Member / Stall Admin: STRICT STALL DATA ISOLATION (Only assigned stall)
 export async function getStallOrders(stallId) {
+  if (!stallId) return [];
   try {
     const { data, error } = await supabase.from('orders').select('*').eq('stall_id', stallId).order('created_at', { ascending: false });
     if (!error && data && data.length > 0) return data;
@@ -382,7 +620,7 @@ export async function getStallOrders(stallId) {
   return orders.filter(o => o.stall_id === stallId);
 }
 
-// Super Admin: View all campus orders
+// Super Admin: View all orders across all stalls
 export async function getAllOrders() {
   try {
     const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
@@ -395,7 +633,7 @@ export async function getAllOrders() {
 // Order Status Workflow Engine
 export async function updateOrderStatus(orderId, newStatus, rejectionReason = '') {
   const orders = getLocal(STORAGE_KEYS.ORDERS, []);
-  const idx = orders.findIndex(o => o.id === orderId || o.order_id === orderId);
+  const idx = orders.findIndex(o => o.id === orderId || o.order_number === orderId || o.order_id === orderId);
   if (idx === -1) {
     throw new Error('Order not found');
   }

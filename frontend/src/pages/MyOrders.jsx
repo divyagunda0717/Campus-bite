@@ -20,15 +20,9 @@ export default function MyOrders() {
 
   const fetchOrders = async () => {
     setLoading(true);
-    // Fetch orders for current student/user or all recent demo orders
     let data = [];
     if (user?.id) {
       data = await getUserOrders(user.id);
-    }
-    // If no orders for this specific mock id, load recent orders so judge can test immediately
-    if (!data || data.length === 0) {
-      const all = await getAllOrders();
-      data = all.slice(0, 10);
     }
     setOrders(data);
     setLoading(false);

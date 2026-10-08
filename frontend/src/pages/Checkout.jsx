@@ -45,6 +45,12 @@ export default function Checkout() {
     e.preventDefault();
     setErrorMsg('');
 
+    if (!user) {
+      setErrorMsg('Please sign in to place your order.');
+      navigate('/login');
+      return;
+    }
+
     if (!selectedSlot) {
       setErrorMsg('Please select a 10-minute pickup window for your order.');
       return;
@@ -58,9 +64,9 @@ export default function Checkout() {
     setLoading(true);
     try {
       const order = await createOrder({
-        userId: user?.id || 'guest-student',
-        customerName: user?.name || 'Campus Student',
-        customerEmail: user?.email || '',
+        userId: user.id,
+        customerName: user.name || 'Campus Student',
+        customerEmail: user.email || '',
         stallId: cartStall.id,
         stallName: cartStall.name,
         pickupSlotId: selectedSlot.id,

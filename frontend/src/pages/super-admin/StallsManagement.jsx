@@ -361,7 +361,7 @@ export default function StallsManagement() {
                         type="email"
                         value={formData.assigned_admin_email}
                         onChange={(e) => setFormData({ ...formData, assigned_admin_email: e.target.value })}
-                        placeholder="operator@campusbite.demo"
+                        placeholder="operator@campus.edu"
                         className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:outline-hidden"
                       />
                     </div>

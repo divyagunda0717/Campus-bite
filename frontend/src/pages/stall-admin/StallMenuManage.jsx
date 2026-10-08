@@ -7,7 +7,7 @@ const CATEGORIES = ['Tiffins', 'Lunch', 'Snacks', 'Beverages', 'Fast Food', 'Des
 
 export default function StallMenuManage() {
   const { assignedStallId } = useAuth();
-  const stallId = assignedStallId || '22222222-2222-2222-2222-222222222222';
+  const stallId = assignedStallId;
 
   const [stall, setStall] = useState(null);
   const [foods, setFoods] = useState([]);
@@ -28,6 +28,10 @@ export default function StallMenuManage() {
   });
 
   const loadData = async () => {
+    if (!stallId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const s = await getStallById(stallId);
     setStall(s);
@@ -43,6 +47,20 @@ export default function StallMenuManage() {
     window.addEventListener('campusbite_data_updated', handleUpdate);
     return () => window.removeEventListener('campusbite_data_updated', handleUpdate);
   }, [stallId]);
+
+  if (!stallId) {
+    return (
+      <div className="max-w-xl mx-auto py-16 px-4 text-center space-y-4">
+        <div className="w-16 h-16 rounded-3xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+          <Utensils className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900">No Food Stall Assigned</h2>
+        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+          Please contact the Super Admin to assign you to a stall before managing menu items.
+        </p>
+      </div>
+    );
+  }
 
   const handleOpenAddModal = () => {
     setEditingFood(null);

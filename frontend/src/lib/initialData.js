@@ -10,8 +10,8 @@ export const SEED_STALLS = [
     image_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80',
     is_open: true,
     is_active: true,
-    assigned_admin_email: 'maincanteen@campusbite.demo',
-    assigned_admin_name: 'Anand Verma',
+    assigned_admin_email: '',
+    assigned_admin_name: '',
     created_at: new Date().toISOString()
   },
   {
@@ -23,8 +23,8 @@ export const SEED_STALLS = [
     image_url: 'https://images.unsplash.com/photo-1630383249896-424e482df921?auto=format&fit=crop&w=800&q=80',
     is_open: true,
     is_active: true,
-    assigned_admin_email: 'tiffin@campusbite.demo',
-    assigned_admin_name: 'Ramesh Kumar',
+    assigned_admin_email: '',
+    assigned_admin_name: '',
     created_at: new Date().toISOString()
   },
   {
@@ -36,8 +36,8 @@ export const SEED_STALLS = [
     image_url: 'https://images.unsplash.com/photo-1561758033-d89a9ad46330?auto=format&fit=crop&w=800&q=80',
     is_open: true,
     is_active: true,
-    assigned_admin_email: 'fastfood@campusbite.demo',
-    assigned_admin_name: 'Suresh Patel',
+    assigned_admin_email: '',
+    assigned_admin_name: '',
     created_at: new Date().toISOString()
   },
   {
@@ -49,8 +49,8 @@ export const SEED_STALLS = [
     image_url: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80',
     is_open: true,
     is_active: true,
-    assigned_admin_email: 'snacks@campusbite.demo',
-    assigned_admin_name: 'Govind Rao',
+    assigned_admin_email: '',
+    assigned_admin_name: '',
     created_at: new Date().toISOString()
   },
   {
@@ -62,8 +62,8 @@ export const SEED_STALLS = [
     image_url: 'https://images.unsplash.com/photo-1622597467836-f3285f2131b8?auto=format&fit=crop&w=800&q=80',
     is_open: true,
     is_active: true,
-    assigned_admin_email: 'juice@campusbite.demo',
-    assigned_admin_name: 'Pooja Hegde',
+    assigned_admin_email: '',
+    assigned_admin_name: '',
     created_at: new Date().toISOString()
   }
 ];

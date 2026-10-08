@@ -7,7 +7,7 @@ import StatusBadge from '../../components/StatusBadge';
 
 export default function StallDashboard() {
   const { user, assignedStallId } = useAuth();
-  const stallId = assignedStallId || '22222222-2222-2222-2222-222222222222'; // fallback to Tiffin Stall
+  const stallId = assignedStallId;
 
   const [stall, setStall] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -15,6 +15,10 @@ export default function StallDashboard() {
   const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
+    if (!stallId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const s = await getStallById(stallId);
     setStall(s);
@@ -45,6 +49,20 @@ export default function StallDashboard() {
       <div className="py-20 text-center">
         <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
         <p className="text-xs text-slate-500 font-medium">Loading stall dashboard...</p>
+      </div>
+    );
+  }
+
+  if (!stallId) {
+    return (
+      <div className="max-w-xl mx-auto py-16 px-4 text-center space-y-4">
+        <div className="w-16 h-16 rounded-3xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+          <AlertCircle className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900">No Food Stall Assigned</h2>
+        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+          Your account is active, but you have not yet been assigned to a food stall by the Super Admin.
+        </p>
       </div>
     );
   }
