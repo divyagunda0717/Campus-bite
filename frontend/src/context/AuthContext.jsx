@@ -206,9 +206,9 @@ export function AuthProvider({ children }) {
         };
       }
 
-      // Student and Faculty: ACTIVE immediately (Requirement 2 & 3)
-      // Staff Member and Stall Admin: PENDING (Requirement 4 & 5)
-      const initialStatus = (normalizedRole === 'STAFF_MEMBER' || normalizedRole === 'STALL_ADMIN')
+      // Student, Faculty and Stall Admin: ACTIVE immediately
+      // Only Staff Member: PENDING until Super Admin approval
+      const initialStatus = normalizedRole === 'STAFF_MEMBER'
         ? 'PENDING'
         : 'ACTIVE';
 

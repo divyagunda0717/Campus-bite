@@ -93,9 +93,11 @@ export default function Register() {
           email
         });
       } else {
-        // Active student or faculty: redirect to dashboard
+        // Redirect to role-specific dashboard
         if (selectedRole === 'FACULTY') {
           navigate('/faculty');
+        } else if (selectedRole === 'STALL_ADMIN') {
+          navigate('/stall-admin');
         } else {
           navigate('/');
         }
